@@ -1,9 +1,11 @@
 extern crate bit_vec;
 extern crate sfml;
+use bit_vec::BitVec;
 
+use std::collections::HashSet;
 use sfml::graphics::{Vertex};
 use sfml::system::{Vector2f};
-use std::collections::HashSet;
+
 
 #[derive(Clone)]
 pub struct Grid {
@@ -11,7 +13,10 @@ pub struct Grid {
     pub line_width : f32,
     pub horizontal_lines: Vec<Vertex>,
     pub vertical_lines: Vec<Vertex>,
-    pub cells : HashSet<usize>,
+    // pub cells : Vec<bool>,
+    pub cells : BitVec,
+    pub living_cells : HashSet<usize>,
+    pub living_cells_old : HashSet<usize>,
     pub num_cols : usize,
     pub num_rows : usize
 }
@@ -29,7 +34,7 @@ impl Grid {
                        (board_size.1 % 2) as f32 * (cell_size / 2.0_f32 + line_width);
         let top_left_y = top_left_y * -1.;
 
-        for i in 0..board_size.1+1 {
+        for i in 0..=board_size.1 {
             let off = i as f32 * (cell_size + line_width);
             hl.push(Vertex::with_pos(Vector2f::new(top_left_x, top_left_y + off)));
             hl.push(Vertex::with_pos(Vector2f::new(top_left_x, top_left_y + line_width + off)));
@@ -38,7 +43,7 @@ impl Grid {
         }
 
         let mut vl = Vec::new();
-        for i in 0..board_size.0 + 1 {
+        for i in 0..=board_size.0 {
             let off = i as f32 * (cell_size + line_width);
             vl.push(Vertex::with_pos(Vector2f::new(top_left_x + off, top_left_y)));
             vl.push(Vertex::with_pos(Vector2f::new(top_left_x + off, top_left_y * -1. + line_width)));
@@ -46,23 +51,29 @@ impl Grid {
             vl.push(Vertex::with_pos(Vector2f::new(top_left_x + line_width + off, top_left_y)));
         }
 
+        let cells = BitVec::from_elem((board_size.1 * board_size.0) as usize, false);
+        // let cells = vec![false ; (board_size.1 * board_size.0) as usize];
+
         Self{cell_size : cell_size,
              line_width : line_width,
              horizontal_lines : hl,
              vertical_lines : vl,
-             cells : HashSet::new(),
+             cells : cells,
+             living_cells : HashSet::new(),
+             living_cells_old : HashSet::new(),
              num_cols : board_size.0 as usize,
              num_rows : board_size.1 as usize
         }
     }
 
-    pub fn coord_to_key(self : &Self, col : usize, row : usize) -> usize {
+    #[inline]
+    fn coord_to_idx(self : &Self, col : usize, row : usize) -> usize {
         self.num_cols * row  + col
     }
 
-    pub fn key_to_coord(self : &Self, key : usize) -> (usize, usize) {
-        let row = key / self.num_cols;
-        let col = key - (row * self.num_cols);
+    pub fn idx_to_coord(self : &Self, idx : usize) -> (usize, usize) {
+        let row = idx / self.num_cols;
+        let col = idx - (row * self.num_cols);
         (col, row)
     }
 
@@ -89,46 +100,45 @@ impl Grid {
         (x, y)
     }
 
-    pub fn cell(self : &Self, col : usize, row : usize) -> Option<bool> {
-        if col < self.num_cols && row < self.num_rows {
-            match self.cells.get(&self.coord_to_key(col, row)) {
-                Some(_) => { return Some(true); },
-                _ => { return Some(false); }
-            }
+    pub fn cell(self : &Self, col : usize, row : usize) -> bool {
+        self.cells[self.coord_to_idx(col, row)]
+    }
+
+    pub fn clear_grid(self : &mut Self) {
+        for idx in &self.living_cells {
+            // self.cells[*idx] = false;
+            self.cells.set(*idx, false);
         }
-        None
+        self.living_cells.clear();
     }
 
     pub fn set_cell(self : &mut Self, col : usize, row : usize, value : bool) {
         if col < self.num_cols && row < self.num_rows {
-            let key = self.coord_to_key(col, row);
+            let idx = self.coord_to_idx(col, row);
+            // self.cells[idx] = value;
+            self.cells.set(idx, value);
             if value {
-                self.cells.insert(key);
-            } else {
-                self.cells.remove(&key);
+                self.living_cells.insert(idx);
             }
         }
     }
 
-    pub fn rule_result(self : &Self, col : usize, row : usize) -> Option<bool> {
-        let key = self.coord_to_key(col, row);
+    fn rule_result(self : &Self, idx : usize) -> Option<bool> {
+        let (col, row) = self.idx_to_coord(idx);
 
-        match self.num_neighbors(col, row) {
+        match self.count_neighbors(col, row) {
             Some(num_neighbors) => {
-                match self.cells.get(&key) {
-                    Some(_) => {
-                        if num_neighbors < 2 || num_neighbors > 3 {
-                            return Some(false);
-                        } else {
-                            return Some(true);
-                        }
-                    },
-                    _ => {
-                        if num_neighbors == 3 {
-                            return Some(true);
-                        } else {
-                            return Some(false);
-                        }
+                if self.cells[idx] == true {
+                    if num_neighbors < 2 || num_neighbors > 3 {
+                        Some(false)
+                    } else {
+                        Some(true)
+                    }
+                } else {
+                    if num_neighbors == 3 {
+                        Some(true)
+                    } else {
+                        Some(false)
                     }
                 }
             },
@@ -136,108 +146,222 @@ impl Grid {
         }
     }
 
-    fn num_neighbors(self : &Self, col : usize, row : usize) -> Option<usize> {
-        let mut keys = vec![0_usize; 8];
+    fn count_neighbors(self : &Self, col : usize, row : usize) -> Option<u8> {
+        let mut num_neighbors = 0_u8;
 
         if col > 0 && col < self.num_cols-1 &&
            row > 0 && row < self.num_rows-1 {
-            keys[0] = self.coord_to_key(col+1, row);
-            keys[1] = self.coord_to_key(col-1, row);
-            keys[2] = self.coord_to_key(col, row+1);
-            keys[3] = self.coord_to_key(col, row-1);
-            keys[4] = self.coord_to_key(col+1, row+1);
-            keys[5] = self.coord_to_key(col-1, row+1);
-            keys[6] = self.coord_to_key(col+1, row-1);
-            keys[7] = self.coord_to_key(col-1, row-1);
+            num_neighbors += self.cells[self.coord_to_idx(col+1, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, row-1)] as u8;
         } else if col > 0 && col < self.num_cols-1 &&
                   row == 0 {
-            keys[0] = self.coord_to_key(col, 1);
-            keys[1] = self.coord_to_key(col+1, 1);
-            keys[2] = self.coord_to_key(col-1, 1);
-            keys[3] = self.coord_to_key(col-1, 0);
-            keys[4] = self.coord_to_key(col+1, 0);
-            keys[5] = self.coord_to_key(col, self.num_rows-1);
-            keys[6] = self.coord_to_key(col+1, self.num_rows-1);
-            keys[7] = self.coord_to_key(col-1, self.num_rows-1);
+            num_neighbors += self.cells[self.coord_to_idx(col, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, self.num_rows-1)] as u8;
         } else if col > 0 && col < self.num_cols-1 &&
                   row == self.num_rows-1 {
-            keys[0] = self.coord_to_key(col+1, self.num_rows-2);
-            keys[1] = self.coord_to_key(col, self.num_rows-2);
-            keys[2] = self.coord_to_key(col-1, self.num_rows-2);
-            keys[3] = self.coord_to_key(col+1, self.num_rows-1);
-            keys[4] = self.coord_to_key(col-1, self.num_rows-1);
-            keys[5] = self.coord_to_key(col+1, 0);
-            keys[6] = self.coord_to_key(col, 0);
-            keys[7] = self.coord_to_key(col-1, 0);
+            num_neighbors += self.cells[self.coord_to_idx(col+1, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col+1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(col-1, 0)] as u8;
         } else if col == 0 &&
                   row > 0 && row < self.num_rows-1 {
-            keys[0] = self.coord_to_key(1, row+1);
-            keys[1] = self.coord_to_key(1, row);
-            keys[2] = self.coord_to_key(1, row-1);
-            keys[3] = self.coord_to_key(0, row-1);
-            keys[4] = self.coord_to_key(0, row+1);
-            keys[5] = self.coord_to_key(self.num_cols-1, row+1);
-            keys[6] = self.coord_to_key(self.num_cols-1, row);
-            keys[7] = self.coord_to_key(self.num_cols-1, row-1);
+            num_neighbors += self.cells[self.coord_to_idx(1, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, row-1)] as u8;
         } else if col == self.num_cols-1 &&
                   row > 0 && row < self.num_rows-1 {
-            keys[0] = self.coord_to_key(self.num_cols-2, row+1);
-            keys[1] = self.coord_to_key(self.num_cols-2, row);
-            keys[2] = self.coord_to_key(self.num_cols-2, row-1);
-            keys[3] = self.coord_to_key(self.num_cols-1, row-1);
-            keys[4] = self.coord_to_key(self.num_cols-1, row+1);
-            keys[5] = self.coord_to_key(0, row+1);
-            keys[6] = self.coord_to_key(0, row);
-            keys[7] = self.coord_to_key(0, row-1);
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, row-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, row+1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, row)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, row-1)] as u8;
         } else if col == 0 &&
                   row == 0 {
-            keys[0] = self.coord_to_key(1, 0);
-            keys[1] = self.coord_to_key(1, 1);
-            keys[2] = self.coord_to_key(0, 1);
-            keys[3] = self.coord_to_key(0, self.num_rows-1);
-            keys[4] = self.coord_to_key(1, self.num_rows-1);
-            keys[5] = self.coord_to_key(self.num_cols-1, 0);
-            keys[6] = self.coord_to_key(self.num_cols-1, 1);
-            keys[7] = self.coord_to_key(self.num_cols-1, self.num_rows-1);
+            num_neighbors += self.cells[self.coord_to_idx(1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, self.num_rows-1)] as u8;
         } else if col == self.num_cols-1 &&
                   row == self.num_rows-1 {
-            keys[0] = self.coord_to_key(self.num_cols-2, self.num_rows-1);
-            keys[1] = self.coord_to_key(self.num_cols-2, self.num_rows-2);
-            keys[2] = self.coord_to_key(self.num_cols-1, self.num_rows-2);
-            keys[3] = self.coord_to_key(0, self.num_rows-2);
-            keys[4] = self.coord_to_key(0, self.num_rows-1);
-            keys[5] = self.coord_to_key(self.num_cols-1, 0);
-            keys[6] = self.coord_to_key(self.num_cols-2, 0);
-            keys[7] = self.coord_to_key(0, 0);
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, 0)] as u8;
         } else if col == 0 &&
                   row == self.num_rows-1 {
-            keys[0] = self.coord_to_key(0, self.num_rows-2);
-            keys[1] = self.coord_to_key(1, self.num_rows-2);
-            keys[2] = self.coord_to_key(1, self.num_rows-1);
-            keys[3] = self.coord_to_key(self.num_cols-1, 0);
-            keys[4] = self.coord_to_key(0, 0);
-            keys[5] = self.coord_to_key(1, 0);
-            keys[6] = self.coord_to_key(self.num_cols-1, self.num_rows-1);
-            keys[7] = self.coord_to_key(self.num_cols-1, self.num_rows-2);
+            num_neighbors += self.cells[self.coord_to_idx(0, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, self.num_rows-2)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(1, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, self.num_rows-2)] as u8;
         } else if col == self.num_cols-1 &&
                   row == 0 {
-            keys[0] = self.coord_to_key(self.num_cols-2, 0);
-            keys[1] = self.coord_to_key(self.num_cols-2, 1);
-            keys[2] = self.coord_to_key(self.num_cols-1, 1);
-            keys[3] = self.coord_to_key(0, 0);
-            keys[4] = self.coord_to_key(0, 1);
-            keys[5] = self.coord_to_key(self.num_cols-1, self.num_rows-1);
-            keys[6] = self.coord_to_key(self.num_cols-2, self.num_rows-1);
-            keys[7] = self.coord_to_key(0, self.num_rows-1);
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, 0)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, 1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-1, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(self.num_cols-2, self.num_rows-1)] as u8;
+            num_neighbors += self.cells[self.coord_to_idx(0, self.num_rows-1)] as u8;
         } else {
             return None;
         }
 
-        let mut num_neighbors = 0_usize;
-        for k in &keys {
-            num_neighbors = num_neighbors + self.cells.contains(k) as usize;
+        Some(num_neighbors)
+    }
+
+    fn get_surrounding_cell_idx(self : &Self, idx : usize) -> [usize; 9] {
+        let mut keys = [0_usize; 9];
+        let (col, row) = self.idx_to_coord(idx);
+
+        keys[8] = idx;
+
+        if col > 0 && col < self.num_cols-1 &&
+           row > 0 && row < self.num_rows-1 {
+            keys[0] = self.coord_to_idx(col+1, row);
+            keys[1] = self.coord_to_idx(col-1, row);
+            keys[2] = self.coord_to_idx(col, row+1);
+            keys[3] = self.coord_to_idx(col, row-1);
+            keys[4] = self.coord_to_idx(col+1, row+1);
+            keys[5] = self.coord_to_idx(col-1, row+1);
+            keys[6] = self.coord_to_idx(col+1, row-1);
+            keys[7] = self.coord_to_idx(col-1, row-1);
+        } else if col > 0 && col < self.num_cols-1 &&
+                  row == 0 {
+            keys[0] = self.coord_to_idx(col, 1);
+            keys[1] = self.coord_to_idx(col+1, 1);
+            keys[2] = self.coord_to_idx(col-1, 1);
+            keys[3] = self.coord_to_idx(col-1, 0);
+            keys[4] = self.coord_to_idx(col+1, 0);
+            keys[5] = self.coord_to_idx(col, self.num_rows-1);
+            keys[6] = self.coord_to_idx(col+1, self.num_rows-1);
+            keys[7] = self.coord_to_idx(col-1, self.num_rows-1);
+        } else if col > 0 && col < self.num_cols-1 &&
+                  row == self.num_rows-1 {
+            keys[0] = self.coord_to_idx(col+1, self.num_rows-2);
+            keys[1] = self.coord_to_idx(col, self.num_rows-2);
+            keys[2] = self.coord_to_idx(col-1, self.num_rows-2);
+            keys[3] = self.coord_to_idx(col+1, self.num_rows-1);
+            keys[4] = self.coord_to_idx(col-1, self.num_rows-1);
+            keys[5] = self.coord_to_idx(col+1, 0);
+            keys[6] = self.coord_to_idx(col, 0);
+            keys[7] = self.coord_to_idx(col-1, 0);
+        } else if col == 0 &&
+                  row > 0 && row < self.num_rows-1 {
+            keys[0] = self.coord_to_idx(1, row+1);
+            keys[1] = self.coord_to_idx(1, row);
+            keys[2] = self.coord_to_idx(1, row-1);
+            keys[3] = self.coord_to_idx(0, row-1);
+            keys[4] = self.coord_to_idx(0, row+1);
+            keys[5] = self.coord_to_idx(self.num_cols-1, row+1);
+            keys[6] = self.coord_to_idx(self.num_cols-1, row);
+            keys[7] = self.coord_to_idx(self.num_cols-1, row-1);
+        } else if col == self.num_cols-1 &&
+                  row > 0 && row < self.num_rows-1 {
+            keys[0] = self.coord_to_idx(self.num_cols-2, row+1);
+            keys[1] = self.coord_to_idx(self.num_cols-2, row);
+            keys[2] = self.coord_to_idx(self.num_cols-2, row-1);
+            keys[3] = self.coord_to_idx(self.num_cols-1, row-1);
+            keys[4] = self.coord_to_idx(self.num_cols-1, row+1);
+            keys[5] = self.coord_to_idx(0, row+1);
+            keys[6] = self.coord_to_idx(0, row);
+            keys[7] = self.coord_to_idx(0, row-1);
+        } else if col == 0 &&
+                  row == 0 {
+            keys[0] = self.coord_to_idx(1, 0);
+            keys[1] = self.coord_to_idx(1, 1);
+            keys[2] = self.coord_to_idx(0, 1);
+            keys[3] = self.coord_to_idx(0, self.num_rows-1);
+            keys[4] = self.coord_to_idx(1, self.num_rows-1);
+            keys[5] = self.coord_to_idx(self.num_cols-1, 0);
+            keys[6] = self.coord_to_idx(self.num_cols-1, 1);
+            keys[7] = self.coord_to_idx(self.num_cols-1, self.num_rows-1);
+        } else if col == self.num_cols-1 &&
+                  row == self.num_rows-1 {
+            keys[0] = self.coord_to_idx(self.num_cols-2, self.num_rows-1);
+            keys[1] = self.coord_to_idx(self.num_cols-2, self.num_rows-2);
+            keys[2] = self.coord_to_idx(self.num_cols-1, self.num_rows-2);
+            keys[3] = self.coord_to_idx(0, self.num_rows-2);
+            keys[4] = self.coord_to_idx(0, self.num_rows-1);
+            keys[5] = self.coord_to_idx(self.num_cols-1, 0);
+            keys[6] = self.coord_to_idx(self.num_cols-2, 0);
+            keys[7] = self.coord_to_idx(0, 0);
+        } else if col == 0 &&
+                  row == self.num_rows-1 {
+            keys[0] = self.coord_to_idx(0, self.num_rows-2);
+            keys[1] = self.coord_to_idx(1, self.num_rows-2);
+            keys[2] = self.coord_to_idx(1, self.num_rows-1);
+            keys[3] = self.coord_to_idx(self.num_cols-1, 0);
+            keys[4] = self.coord_to_idx(0, 0);
+            keys[5] = self.coord_to_idx(1, 0);
+            keys[6] = self.coord_to_idx(self.num_cols-1, self.num_rows-1);
+            keys[7] = self.coord_to_idx(self.num_cols-1, self.num_rows-2);
+        } else if col == self.num_cols-1 &&
+                  row == 0 {
+            keys[0] = self.coord_to_idx(self.num_cols-2, 0);
+            keys[1] = self.coord_to_idx(self.num_cols-2, 1);
+            keys[2] = self.coord_to_idx(self.num_cols-1, 1);
+            keys[3] = self.coord_to_idx(0, 0);
+            keys[4] = self.coord_to_idx(0, 1);
+            keys[5] = self.coord_to_idx(self.num_cols-1, self.num_rows-1);
+            keys[6] = self.coord_to_idx(self.num_cols-2, self.num_rows-1);
+            keys[7] = self.coord_to_idx(0, self.num_rows-1);
         }
 
-        Some(num_neighbors)
+        keys
+    }
+
+    pub fn run_lifecycle(self : &mut Self) {
+        for idx in &self.living_cells {
+            let indices = self.get_surrounding_cell_idx(*idx);
+            for idx in &indices {
+                if self.rule_result(*idx).unwrap() {
+                    self.living_cells_old.insert(*idx);
+                }
+            }
+        }
+
+        self.clear_grid();
+        for idx in &self.living_cells_old {
+            self.cells.set(*idx, true);
+        }
+
+        std::mem::swap(&mut self.living_cells, &mut self.living_cells_old);
     }
 }
