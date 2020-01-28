@@ -12,16 +12,10 @@ use sfml::window::{Event, Style, Key};
 use std::io::BufReader;
 use std::vec::Vec;
 
-pub enum ActiveGrid {
-    A, B
-}
-
 pub struct GameOfLife<'a> {
     window_size : (u32, u32),
     window : RenderWindow,
-    grid_a : grid::Grid,
-    grid_b : grid::Grid,
-    active_grid : ActiveGrid,
+    grid : grid::Grid,
     cell_sprites : Vec<RectangleShape<'a>>
 }
 
@@ -37,265 +31,21 @@ impl<'a> GameOfLife<'a> {
                                         &Default::default());
         wnd.set_framerate_limit(144);
 
-        let grid_a = grid::Grid::new(12., 2., board_size);
-        let grid_b = grid_a.clone();
+        let grid = grid::Grid::new(12., 2., board_size);
 
         Self{window_size : window_size,
              window : wnd,
-             grid_a : grid_a,
-             grid_b : grid_b,
-             active_grid : ActiveGrid::A,
+             grid : grid,
              cell_sprites : Vec::new()}
     }
 
-    fn swap_grid(self : &mut Self) {
-        self.active_grid = match &self.active_grid {
-            ActiveGrid::A => ActiveGrid::B,
-            ActiveGrid::B => ActiveGrid::A,
-        }
-    }
-
-    // fn check_neighbours() ->
-
-    fn run_one_lifecycle(self : &mut Self) {
-        let mut checked_cells = std::collections::HashSet::new();
-
-        match &self.active_grid {
-            ActiveGrid::A => {
-                self.grid_b.cells.clear();
-                for key in &self.grid_a.cells {
-                    let (col, row) = self.grid_a.key_to_coord(*key);
-                    let mut keys = [(0_usize, 0_usize); 9];
-
-                    keys[8] = (col, row);
-
-                    if col > 0 && col < self.grid_a.num_cols-1 &&
-                       row > 0 && row < self.grid_a.num_rows-1 {
-                        keys[0] = (col+1, row);
-                        keys[1] = (col-1, row);
-                        keys[2] = (col, row+1);
-                        keys[3] = (col, row-1);
-                        keys[4] = (col+1, row+1);
-                        keys[5] = (col-1, row+1);
-                        keys[6] = (col+1, row-1);
-                        keys[7] = (col-1, row-1);
-                    } else if col > 0 && col < self.grid_a.num_cols-1 &&
-                              row == 0 {
-                        keys[0] = (col, 1);
-                        keys[1] = (col+1, 1);
-                        keys[2] = (col-1, 1);
-                        keys[3] = (col-1, 0);
-                        keys[4] = (col+1, 0);
-                        keys[5] = (col, self.grid_a.num_rows-1);
-                        keys[6] = (col+1, self.grid_a.num_rows-1);
-                        keys[7] = (col-1, self.grid_a.num_rows-1);
-                    } else if col > 0 && col < self.grid_a.num_cols-1 &&
-                              row == self.grid_a.num_rows-1 {
-                        keys[0] = (col+1, self.grid_a.num_rows-2);
-                        keys[1] = (col, self.grid_a.num_rows-2);
-                        keys[2] = (col-1, self.grid_a.num_rows-2);
-                        keys[3] = (col+1, self.grid_a.num_rows-1);
-                        keys[4] = (col-1, self.grid_a.num_rows-1);
-                        keys[5] = (col+1, 0);
-                        keys[6] = (col, 0);
-                        keys[7] = (col-1, 0);
-                    } else if col == 0 &&
-                              row > 0 && row < self.grid_a.num_rows-1 {
-                        keys[0] = (1, row+1);
-                        keys[1] = (1, row);
-                        keys[2] = (1, row-1);
-                        keys[3] = (0, row-1);
-                        keys[4] = (0, row+1);
-                        keys[5] = (self.grid_a.num_cols-1, row+1);
-                        keys[6] = (self.grid_a.num_cols-1, row);
-                        keys[7] = (self.grid_a.num_cols-1, row-1);
-                    } else if col == self.grid_a.num_cols-1 &&
-                              row > 0 && row < self.grid_a.num_rows-1 {
-                        keys[0] = (self.grid_a.num_cols-2, row+1);
-                        keys[1] = (self.grid_a.num_cols-2, row);
-                        keys[2] = (self.grid_a.num_cols-2, row-1);
-                        keys[3] = (self.grid_a.num_cols-1, row-1);
-                        keys[4] = (self.grid_a.num_cols-1, row+1);
-                        keys[5] = (0, row+1);
-                        keys[6] = (0, row);
-                        keys[7] = (0, row-1);
-                    } else if col == 0 &&
-                              row == 0 {
-                        keys[0] = (1, 0);
-                        keys[1] = (1, 1);
-                        keys[2] = (0, 1);
-                        keys[3] = (0, self.grid_a.num_rows-1);
-                        keys[4] = (1, self.grid_a.num_rows-1);
-                        keys[5] = (self.grid_a.num_cols-1, 0);
-                        keys[6] = (self.grid_a.num_cols-1, 1);
-                        keys[7] = (self.grid_a.num_cols-1, self.grid_a.num_rows-1);
-                    } else if col == self.grid_a.num_cols-1 &&
-                              row == self.grid_a.num_rows-1 {
-                        keys[0] = (self.grid_a.num_cols-2, self.grid_a.num_rows-1);
-                        keys[1] = (self.grid_a.num_cols-2, self.grid_a.num_rows-2);
-                        keys[2] = (self.grid_a.num_cols-1, self.grid_a.num_rows-2);
-                        keys[3] = (0, self.grid_a.num_rows-2);
-                        keys[4] = (0, self.grid_a.num_rows-1);
-                        keys[5] = (self.grid_a.num_cols-1, 0);
-                        keys[6] = (self.grid_a.num_cols-2, 0);
-                        keys[7] = (0, 0);
-                    } else if col == 0 &&
-                              row == self.grid_a.num_rows-1 {
-                        keys[0] = (0, self.grid_a.num_rows-2);
-                        keys[1] = (1, self.grid_a.num_rows-2);
-                        keys[2] = (1, self.grid_a.num_rows-1);
-                        keys[3] = (self.grid_a.num_cols-1, 0);
-                        keys[4] = (0, 0);
-                        keys[5] = (1, 0);
-                        keys[6] = (self.grid_a.num_cols-1, self.grid_a.num_rows-1);
-                        keys[7] = (self.grid_a.num_cols-1, self.grid_a.num_rows-2);
-                    } else if col == self.grid_a.num_cols-1 &&
-                              row == 0 {
-                        keys[0] = (self.grid_a.num_cols-2, 0);
-                        keys[1] = (self.grid_a.num_cols-2, 1);
-                        keys[2] = (self.grid_a.num_cols-1, 1);
-                        keys[3] = (0, 0);
-                        keys[4] = (0, 1);
-                        keys[5] = (self.grid_a.num_cols-1, self.grid_a.num_rows-1);
-                        keys[6] = (self.grid_a.num_cols-2, self.grid_a.num_rows-1);
-                        keys[7] = (0, self.grid_a.num_rows-1);
-                    } else {
-                        return;
-                    }
-
-                    for (col, row) in &keys {
-                        if !checked_cells.contains(&(*col, *row)) {
-                            self.grid_b.set_cell(*col, *row, self.grid_a.rule_result(*col, *row).unwrap());
-                            checked_cells.insert((*col, *row));
-                        }
-                    }
-                }
-                self.grid_a.cells.clear();
-            },
-            ActiveGrid::B => {
-                self.grid_a.cells.clear();
-                for key in &self.grid_b.cells {
-                    let (col, row) = self.grid_b.key_to_coord(*key);
-                    let mut keys = [(0_usize, 0_usize); 9];
-
-                    if col > 0 && col < self.grid_b.num_cols-1 &&
-                       row > 0 && row < self.grid_b.num_rows-1 {
-                        keys[0] = (col+1, row);
-                        keys[1] = (col-1, row);
-                        keys[2] = (col, row+1);
-                        keys[3] = (col, row-1);
-                        keys[4] = (col+1, row+1);
-                        keys[5] = (col-1, row+1);
-                        keys[6] = (col+1, row-1);
-                        keys[7] = (col-1, row-1);
-                    } else if col > 0 && col < self.grid_b.num_cols-1 &&
-                              row == 0 {
-                        keys[0] = (col, 1);
-                        keys[1] = (col+1, 1);
-                        keys[2] = (col-1, 1);
-                        keys[3] = (col-1, 0);
-                        keys[4] = (col+1, 0);
-                        keys[5] = (col, self.grid_b.num_rows-1);
-                        keys[6] = (col+1, self.grid_b.num_rows-1);
-                        keys[7] = (col-1, self.grid_b.num_rows-1);
-                    } else if col > 0 && col < self.grid_b.num_cols-1 &&
-                              row == self.grid_b.num_rows-1 {
-                        keys[0] = (col+1, self.grid_b.num_rows-2);
-                        keys[1] = (col, self.grid_b.num_rows-2);
-                        keys[2] = (col-1, self.grid_b.num_rows-2);
-                        keys[3] = (col+1, self.grid_b.num_rows-1);
-                        keys[4] = (col-1, self.grid_b.num_rows-1);
-                        keys[5] = (col+1, 0);
-                        keys[6] = (col, 0);
-                        keys[7] = (col-1, 0);
-                    } else if col == 0 &&
-                              row > 0 && row < self.grid_b.num_rows-1 {
-                        keys[0] = (1, row+1);
-                        keys[1] = (1, row);
-                        keys[2] = (1, row-1);
-                        keys[3] = (0, row-1);
-                        keys[4] = (0, row+1);
-                        keys[5] = (self.grid_b.num_cols-1, row+1);
-                        keys[6] = (self.grid_b.num_cols-1, row);
-                        keys[7] = (self.grid_b.num_cols-1, row-1);
-                    } else if col == self.grid_b.num_cols-1 &&
-                              row > 0 && row < self.grid_b.num_rows-1 {
-                        keys[0] = (self.grid_b.num_cols-2, row+1);
-                        keys[1] = (self.grid_b.num_cols-2, row);
-                        keys[2] = (self.grid_b.num_cols-2, row-1);
-                        keys[3] = (self.grid_b.num_cols-1, row-1);
-                        keys[4] = (self.grid_b.num_cols-1, row+1);
-                        keys[5] = (0, row+1);
-                        keys[6] = (0, row);
-                        keys[7] = (0, row-1);
-                    } else if col == 0 &&
-                              row == 0 {
-                        keys[0] = (1, 0);
-                        keys[1] = (1, 1);
-                        keys[2] = (0, 1);
-                        keys[3] = (0, self.grid_b.num_rows-1);
-                        keys[4] = (1, self.grid_b.num_rows-1);
-                        keys[5] = (self.grid_b.num_cols-1, 0);
-                        keys[6] = (self.grid_b.num_cols-1, 1);
-                        keys[7] = (self.grid_b.num_cols-1, self.grid_b.num_rows-1);
-                    } else if col == self.grid_b.num_cols-1 &&
-                              row == self.grid_b.num_rows-1 {
-                        keys[0] = (self.grid_b.num_cols-2, self.grid_b.num_rows-1);
-                        keys[1] = (self.grid_b.num_cols-2, self.grid_b.num_rows-2);
-                        keys[2] = (self.grid_b.num_cols-1, self.grid_b.num_rows-2);
-                        keys[3] = (0, self.grid_b.num_rows-2);
-                        keys[4] = (0, self.grid_b.num_rows-1);
-                        keys[5] = (self.grid_b.num_cols-1, 0);
-                        keys[6] = (self.grid_b.num_cols-2, 0);
-                        keys[7] = (0, 0);
-                    } else if col == 0 &&
-                              row == self.grid_b.num_rows-1 {
-                        keys[0] = (0, self.grid_b.num_rows-2);
-                        keys[1] = (1, self.grid_b.num_rows-2);
-                        keys[2] = (1, self.grid_b.num_rows-1);
-                        keys[3] = (self.grid_b.num_cols-1, 0);
-                        keys[4] = (0, 0);
-                        keys[5] = (1, 0);
-                        keys[6] = (self.grid_b.num_cols-1, self.grid_b.num_rows-1);
-                        keys[7] = (self.grid_b.num_cols-1, self.grid_b.num_rows-2);
-                    } else if col == self.grid_b.num_cols-1 &&
-                              row == 0 {
-                        keys[0] = (self.grid_b.num_cols-2, 0);
-                        keys[1] = (self.grid_b.num_cols-2, 1);
-                        keys[2] = (self.grid_b.num_cols-1, 1);
-                        keys[3] = (0, 0);
-                        keys[4] = (0, 1);
-                        keys[5] = (self.grid_b.num_cols-1, self.grid_b.num_rows-1);
-                        keys[6] = (self.grid_b.num_cols-2, self.grid_b.num_rows-1);
-                        keys[7] = (0, self.grid_b.num_rows-1);
-                    } else {
-                        return;
-                    }
-
-                    for (col, row) in &keys {
-                        if !checked_cells.contains(&(*col, *row)) {
-                            self.grid_a.set_cell(*col, *row, self.grid_b.rule_result(*col, *row).unwrap());
-                            checked_cells.insert((*col, *row));
-                        }
-                    }
-                }
-                self.grid_b.cells.clear();
-            }
-        }
-    }
-
     fn render_cells(self : &mut Self) {
-        let grid = match &self.active_grid {
-            ActiveGrid::A => &self.grid_a,
-            ActiveGrid::B => &self.grid_b
-        };
-
         self.cell_sprites.clear();
 
-        for key in &grid.cells {
-            let (col, row) = self.grid_a.key_to_coord(*key);
+        for idx in &self.grid.living_cells {
+            let (col, row) = self.grid.idx_to_coord(*idx);
             let mut cell = RectangleShape::with_size(Vector2f::new(12., 12.));
-            cell.set_position(Vector2f::from(grid.cell_to_world(col, row)));
+            cell.set_position(Vector2f::from(self.grid.cell_to_world(col, row)));
             self.cell_sprites.push(cell);
         }
 
@@ -317,13 +67,13 @@ impl<'a> GameOfLife<'a> {
 
         let mut block = sfml::graphics::RectangleShape::with_size(Vector2f::new(12., 12.));
 
-        for i in 0..=10 {
-            for j in 0..=10{
-                self.grid_a.set_cell(10 + i * 50, 10 + j * 5, true);
-                self.grid_a.set_cell(11 + i * 50, 10 + j * 5, true);
-                self.grid_a.set_cell(12 + i * 50, 10 + j * 5, true);
-                self.grid_a.set_cell(12 + i * 50, 9 + j *  5, true);
-                self.grid_a.set_cell(11 + i * 50, 8 + j *  5, true);
+        for i in 0..=100 {
+            for j in 0..=100{
+                self.grid.set_cell(10 + i * 7, 10 + j * 5, true);
+                self.grid.set_cell(11 + i * 7, 10 + j * 5, true);
+                self.grid.set_cell(12 + i * 7, 10 + j * 5, true);
+                self.grid.set_cell(12 + i * 7, 9 + j *  5, true);
+                self.grid.set_cell(11 + i * 7, 8 + j *  5, true);
             }
         }
 
@@ -376,12 +126,12 @@ impl<'a> GameOfLife<'a> {
                     }
                     Event::MouseButtonPressed {button : _, x, y} => {
                         let w_c = self.window.map_pixel_to_coords_current_view(Vector2i::new(x, y));
-                        match self.grid_a.world_to_cell(w_c.x, w_c.y) {
+                        match self.grid.world_to_cell(w_c.x, w_c.y) {
                             Some((col, row)) => {
-                                let (w_x, w_y) = self.grid_a.cell_to_world(col, row);
+                                let (w_x, w_y) = self.grid.cell_to_world(col, row);
                                 block.set_position(Vector2f::new(w_x, w_y));
-                                self.grid_a.set_cell(col, row, true);
-                                self.grid_b.set_cell(col, row, true);
+                                self.grid.set_cell(col, row, true);
+                                self.grid.set_cell(col, row, true);
                                 println!("Mapped: {} {}", col, row);
                             }
                             None => {}
@@ -393,8 +143,7 @@ impl<'a> GameOfLife<'a> {
             }
 
             if start.elapsed().as_millis() >= 10 {
-                self.run_one_lifecycle();
-                self.swap_grid();
+                self.grid.run_lifecycle();
                 start = std::time::Instant::now();
             }
 
@@ -403,9 +152,9 @@ impl<'a> GameOfLife<'a> {
 
             self.window.set_active(true);
 
-            self.window.draw_primitives(&self.grid_a.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
-            self.window.draw_primitives(&self.grid_a.vertical_lines, PrimitiveType::Quads, RenderStates::default());
-            self.render_cells();
+            self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
+            self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
+            // self.render_cells();
 
             self.window.display();
 
