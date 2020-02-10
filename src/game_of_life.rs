@@ -5,7 +5,7 @@ mod grid;
 
 use rodio::Sink;
 use sfml::graphics::{RenderWindow, RenderTarget, View, Transformable,
-                     Color, PrimitiveType, RenderStates, VertexArray};
+                     Color, PrimitiveType, VertexArray};
 use sfml::system::{Vector2f, Vector2i};
 use sfml::window::{Event, Style, Key};
 use std::io::BufReader;
@@ -45,53 +45,50 @@ impl GameOfLife {
     }
 
     fn render_cells(self : &mut Self) {
-        // self.num_living_cells_curr = self.grid.num_living_cells();
-        // let mut i = 0_usize;
-        // for worker in &self.grid.worker {
-        //     let w = worker.lock().unwrap();
-        //     for idx in &w.living_cells {
-        //         let (col, row) = w.idx_to_coord(*idx);
-        //         let p = Vector2f::from(self.grid.cell_to_world(col, row));
-        //         self.cell_sprites[i*6].position.x = p.x;
-        //         self.cell_sprites[i*6].position.y = p.y;
+        self.num_living_cells_curr = self.grid.living_cells.len();
+        let mut i = 0_usize;
+        for idx in &self.grid.living_cells {
+            let (col, row) = grid::idx_to_coord(self.grid.num_cols, *idx);
+            let p = Vector2f::from(self.grid.cell_to_world(col, row));
+            self.cell_sprites[i*6].position.x = p.x;
+            self.cell_sprites[i*6].position.y = p.y;
 
-        //         self.cell_sprites[i*6 + 1].position.x = p.x + 12.0;
-        //         self.cell_sprites[i*6 + 1].position.y = p.y;
+            self.cell_sprites[i*6 + 1].position.x = p.x + 12.0;
+            self.cell_sprites[i*6 + 1].position.y = p.y;
 
-        //         self.cell_sprites[i*6 + 2].position.x = p.x;
-        //         self.cell_sprites[i*6 + 2].position.y = p.y + 12.0;
+            self.cell_sprites[i*6 + 2].position.x = p.x;
+            self.cell_sprites[i*6 + 2].position.y = p.y + 12.0;
 
-        //         self.cell_sprites[i*6 + 3].position.x = p.x + 12.0;
-        //         self.cell_sprites[i*6 + 3].position.y = p.y;
+            self.cell_sprites[i*6 + 3].position.x = p.x + 12.0;
+            self.cell_sprites[i*6 + 3].position.y = p.y;
 
-        //         self.cell_sprites[i*6 + 4].position.x = p.x + 12.0;
-        //         self.cell_sprites[i*6 + 4].position.y = p.y + 12.0;
+            self.cell_sprites[i*6 + 4].position.x = p.x + 12.0;
+            self.cell_sprites[i*6 + 4].position.y = p.y + 12.0;
 
-        //         self.cell_sprites[i*6 + 5].position.x = p.x;
-        //         self.cell_sprites[i*6 + 5].position.y = p.y + 12.0;
-        //         i += 1;
-        //     }
-        // }
+            self.cell_sprites[i*6 + 5].position.x = p.x;
+            self.cell_sprites[i*6 + 5].position.y = p.y + 12.0;
+            i += 1;
+        }
 
-        // if i < self.num_living_cells_prev {
-        //     for j in i..self.num_living_cells_prev {
-        //         self.cell_sprites[j*6].position.x = 0.0;
-        //         self.cell_sprites[j*6].position.y = 0.0;
-        //         self.cell_sprites[j*6 + 1].position.x = 0.0;
-        //         self.cell_sprites[j*6 + 1].position.y = 0.0;
-        //         self.cell_sprites[j*6 + 2].position.x = 0.0;
-        //         self.cell_sprites[j*6 + 2].position.y = 0.0;
-        //         self.cell_sprites[j*6 + 3].position.x = 0.0;
-        //         self.cell_sprites[j*6 + 3].position.y = 0.0;
-        //         self.cell_sprites[j*6 + 4].position.x = 0.0;
-        //         self.cell_sprites[j*6 + 4].position.y = 0.0;
-        //         self.cell_sprites[j*6 + 5].position.x = 0.0;
-        //         self.cell_sprites[j*6 + 5].position.y = 0.0;
-        //     }
-        // }
-        // self.num_living_cells_prev = i + 1;
+        if i < self.num_living_cells_prev {
+            for j in i..self.num_living_cells_prev {
+                self.cell_sprites[j*6].position.x = 0.0;
+                self.cell_sprites[j*6].position.y = 0.0;
+                self.cell_sprites[j*6 + 1].position.x = 0.0;
+                self.cell_sprites[j*6 + 1].position.y = 0.0;
+                self.cell_sprites[j*6 + 2].position.x = 0.0;
+                self.cell_sprites[j*6 + 2].position.y = 0.0;
+                self.cell_sprites[j*6 + 3].position.x = 0.0;
+                self.cell_sprites[j*6 + 3].position.y = 0.0;
+                self.cell_sprites[j*6 + 4].position.x = 0.0;
+                self.cell_sprites[j*6 + 4].position.y = 0.0;
+                self.cell_sprites[j*6 + 5].position.x = 0.0;
+                self.cell_sprites[j*6 + 5].position.y = 0.0;
+            }
+        }
+        self.num_living_cells_prev = i + 1;
 
-        // self.window.draw(&self.cell_sprites);
+        self.window.draw(&self.cell_sprites);
     }
 
     pub fn run(self : &mut Self) {
@@ -131,9 +128,9 @@ impl GameOfLife {
                     }
                     Event::MouseWheelScrolled {wheel:_, delta, x:_, y:_} => {
                         if delta > 0. {
-                            w -= 30.;
+                            w -= 300.;
                         } else {
-                            w += 30.;
+                            w += 300.;
                         }
                         let h = w * (self.window_size.1 as f32 / self.window_size.0 as f32);
                         view.set_size(Vector2f::new(w, h));
@@ -192,8 +189,8 @@ impl GameOfLife {
 
             self.window.set_active(true);
 
-            self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
-            self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
+            // self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
+            // self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
             self.render_cells();
 
             self.window.display();

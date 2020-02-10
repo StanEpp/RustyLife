@@ -4,7 +4,7 @@ extern crate rayon;
 
 use bit_vec::BitVec;
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, RwLock, Mutex, mpsc};
 use sfml::graphics::{Vertex};
 use sfml::system::{Vector2f};
 
@@ -16,6 +16,7 @@ pub struct GridWorker {
     pub living_cells : HashSet<usize>,
     pub living_cells_tmp : HashSet<usize>,
     pub cells : Arc<RwLock<BitVec>>,
+    pub sender : mpsc::Sender<usize>,
     pub col_range : (usize, usize),
     pub row_range : (usize, usize),
     pub num_cols : usize,
@@ -27,9 +28,13 @@ pub struct Grid {
     pub line_width : f32,
     pub horizontal_lines: Vec<Vertex>,
     pub vertical_lines: Vec<Vertex>,
+
+    pub living_cells : HashSet<usize>,
+    pub living_cells_tmp : HashSet<usize>,
     pub cells : Arc<RwLock<BitVec>>,
     pub thread_pool : rayon::ThreadPool,
     pub worker : Vec<Arc<Mutex<GridWorker>>>,
+    pub recv : Mutex<mpsc::Receiver<usize>>,
     pub num_cols : usize,
     pub num_rows : usize
 }
@@ -39,19 +44,17 @@ fn coord_to_idx(num_cols : usize, col : usize, row : usize) -> usize {
     num_cols * row  + col
 }
 
+pub fn idx_to_coord(num_cols : usize, idx : usize) -> (usize, usize) {
+    let row = idx / num_cols;
+    let col = idx - (row * num_cols);
+    (col, row)
+}
+
 impl GridWorker {
     pub fn idx_to_coord(self : &Self, idx : usize) -> (usize, usize) {
         let row = idx / self.num_cols;
         let col = idx - (row * self.num_cols);
         (col, row)
-    }
-
-    pub fn clear_grid(self : &mut Self) {
-        let mut cells = self.cells.write().unwrap();
-        for idx in &self.living_cells {
-            cells.set(*idx, false);
-        }
-        self.living_cells.clear();
     }
 
     fn get_surrounding_cell_idx(self : &Self, idx : usize) -> [usize; 9] {
@@ -263,6 +266,20 @@ impl GridWorker {
         }
     }
 
+    pub fn cell_in_range(self : &Self, col : usize, row : usize) -> bool {
+        if col >= self.col_range.0 && col < self.col_range.1 &&
+           row >= self.row_range.0 && row < self.row_range.1 {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn idx_in_range(self : &Self, idx : usize) -> bool {
+        let (col, row) = self.idx_to_coord(idx);
+        self.cell_in_range(col, row)
+    }
+
     fn rule_result(self : &Self, idx : usize) -> Option<bool> {
         let (col, row) = self.idx_to_coord(idx);
 
@@ -290,17 +307,16 @@ impl GridWorker {
         for idx in &self.living_cells {
             let indices = self.get_surrounding_cell_idx(*idx);
             for idx in &indices {
-                if self.rule_result(*idx).unwrap() {
-                    self.living_cells_tmp.insert(*idx);
+                if self.idx_in_range(*idx) {
+                    if self.rule_result(*idx).unwrap() {
+                        self.living_cells_tmp.insert(*idx);
+                        self.sender.send(*idx);
+                    }
                 }
             }
         }
 
-        self.clear_grid();
-        let mut cells = self.cells.write().unwrap();
-        for idx in &self.living_cells_tmp {
-            cells.set(*idx, true);
-        }
+        self.living_cells.clear();
 
         std::mem::swap(&mut self.living_cells, &mut self.living_cells_tmp);
     }
@@ -346,6 +362,8 @@ impl Grid {
         .thread_name(|idx|{ format!["GridWorker#{}", idx] })
         .build().unwrap();
 
+        let (sender, receiver) = mpsc::channel();
+
 
         let mut workers = Vec::<Arc<Mutex<GridWorker>>>::new();
         let sqrt = (NUM_THREADS as f64).sqrt() as usize;
@@ -357,6 +375,7 @@ impl Grid {
                     living_cells : HashSet::new(),
                     living_cells_tmp : HashSet::new(),
                     cells : cells.clone(),
+                    sender : sender.clone(),
                     col_range : (col * cols_per_worker, col * cols_per_worker + cols_per_worker ),
                     row_range : (row * rows_per_worker, row * rows_per_worker + rows_per_worker ),
                     num_cols : num_cols,
@@ -367,6 +386,7 @@ impl Grid {
                 living_cells : HashSet::new(),
                 living_cells_tmp : HashSet::new(),
                 cells : cells.clone(),
+                sender : sender.clone(),
                 col_range : ((sqrt-1) * cols_per_worker, (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt),
                 row_range : (row * rows_per_worker, row * rows_per_worker + rows_per_worker),
                 num_cols : num_cols,
@@ -379,6 +399,7 @@ impl Grid {
                 living_cells : HashSet::new(),
                 living_cells_tmp : HashSet::new(),
                 cells : cells.clone(),
+                sender : sender.clone(),
                 col_range : (col * cols_per_worker, col * cols_per_worker + cols_per_worker ),
                 row_range : ((sqrt-1) * rows_per_worker, (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt),
                 num_cols : num_cols,
@@ -389,6 +410,7 @@ impl Grid {
             living_cells : HashSet::new(),
             living_cells_tmp : HashSet::new(),
             cells : cells.clone(),
+            sender : sender,
             col_range : ((sqrt-1) * cols_per_worker, (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt),
             row_range : ((sqrt-1) * rows_per_worker, (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt),
             num_cols : num_cols,
@@ -410,6 +432,9 @@ impl Grid {
              cells : cells,
              thread_pool : pool,
              worker : workers,
+             living_cells : HashSet::new(),
+             living_cells_tmp : HashSet::new(),
+             recv : Mutex::new(receiver),
              num_cols : num_cols,
              num_rows : num_rows
         }
@@ -446,7 +471,6 @@ impl Grid {
         let sqrt = (NUM_THREADS as f64).sqrt() as usize;
         let cols_per_worker = self.num_cols / sqrt;
         let rows_per_worker = self.num_rows / sqrt;
-        let offset = row / rows_per_worker;
         sqrt * row / rows_per_worker + col / cols_per_worker
     }
 
@@ -462,18 +486,37 @@ impl Grid {
         }
     }
 
-    pub fn num_living_cells(self : &mut Self) -> usize {
-        let mut sum = 0;
-        for i in 0..NUM_THREADS {
-            sum += self.worker[i].lock().unwrap().living_cells.len();
-        }
-        sum
-    }
-
     pub fn run_lifecycle(self : &mut Self) {
-        for idx in 0..NUM_THREADS {
-            let worker = self.worker[idx].clone();
-            self.thread_pool.spawn(move ||{ worker.lock().unwrap().run_lifecycle()});
-        }
+        // self.thread_pool.install(||{
+            rayon::scope(|s|{
+                for idx in 0..NUM_THREADS {
+                    let worker = self.worker[idx].clone();
+                    s.spawn(move |_|{ worker.lock().unwrap().run_lifecycle(); });
+                }
+            });
+            println!("FINISHED!");
+
+            let mut cells = self.cells.write().unwrap();
+
+            for idx in &self.living_cells {
+                cells.set(*idx, false);
+            }
+
+            let recv = self.recv.lock().unwrap();
+            let mut i = 0;
+            loop {
+                let r = recv.try_recv();
+                if r.is_err() {
+                    break;
+                }
+                i += 1;
+                let idx = r.unwrap();
+                cells.set(idx, true);
+                self.living_cells_tmp.insert(idx);
+            }
+            std::mem::swap(&mut self.living_cells, &mut self.living_cells_tmp);
+            println!("FINISHED 22!");
+            // println!("Current living cells: {}", i);
+        // });
     }
 }
