@@ -118,6 +118,7 @@ impl GameOfLife {
         let mut start = std::time::Instant::now();
         let mut fps = std::time::Instant::now();
         let mut fpsCounter = 0;
+        let mut render = true;
 
         while self.window.is_open() {
             sink.play();
@@ -129,9 +130,9 @@ impl GameOfLife {
                     }
                     Event::MouseWheelScrolled {wheel:_, delta, x:_, y:_} => {
                         if delta > 0. {
-                            w -= 30.;
+                            w -= 300.;
                         } else {
-                            w += 30.;
+                            w += 300.;
                         }
                         let h = w * (self.window_size.1 as f32 / self.window_size.0 as f32);
                         view.set_size(Vector2f::new(w, h));
@@ -154,6 +155,9 @@ impl GameOfLife {
                                 view.set_center((0.,0.));
                                 view.set_size(Vector2f::new(self.window_size.0 as f32, self.window_size.1 as f32));
                                 w = self.window_size.0 as f32;
+                            }
+                            Key::R => {
+                                render = !render;
                             }
                             Key::Escape => {
                                 self.window.close();
@@ -190,9 +194,11 @@ impl GameOfLife {
 
             self.window.set_active(true);
 
-            self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
-            self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
-            self.render_cells();
+            if render {
+                self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
+                self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
+                self.render_cells();
+            }
 
             self.window.display();
 
