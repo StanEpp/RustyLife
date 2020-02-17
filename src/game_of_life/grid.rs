@@ -4,7 +4,7 @@ extern crate rayon;
 
 use bit_vec::BitVec;
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock, Mutex, mpsc};
+use std::sync::{Arc, RwLock, RwLockReadGuard, Mutex, mpsc};
 use sfml::graphics::{Vertex};
 use sfml::system::{Vector2f};
 
@@ -48,6 +48,67 @@ pub fn idx_to_coord(num_cols : usize, idx : usize) -> (usize, usize) {
     let row = idx / num_cols;
     let col = idx - (row * num_cols);
     (col, row)
+}
+
+struct GridPatch {
+    pub start_col : usize,
+    pub end_col : usize,
+    pub start_row : usize,
+    pub end_row : usize
+}
+
+fn subdivide_grid(num_cols : usize, num_rows : usize, n : usize) -> Option<Vec<GridPatch>> {
+    // Check if sqrt(n) is an integer
+    let e = 0.00001;
+    let sqrt = (n as f64).sqrt();
+    let frac = sqrt.fract();
+    if frac >= e {
+        return None;
+    }
+
+    // Check if grid is big enough
+    let sqrt = sqrt as usize;
+    if num_cols / sqrt < 1 || num_rows / sqrt < 1 {
+        return None;
+    }
+
+    // Compute square patches
+    let mut ret = Vec::new();
+    let cols_per_worker = num_cols / sqrt as usize;
+    let rows_per_worker = num_rows / sqrt as usize;
+    for row in 0..sqrt-1 {
+        for col in 0..sqrt-1 {
+            ret.push(GridPatch{
+                start_col : col * cols_per_worker,
+                end_col :  col * cols_per_worker + cols_per_worker,
+                start_row : row * rows_per_worker,
+                end_row : row * rows_per_worker + rows_per_worker
+            });
+        }
+        ret.push(GridPatch{
+            start_col : (sqrt-1) * cols_per_worker,
+            end_col : (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt,
+            start_row : row * rows_per_worker,
+            end_row : row * rows_per_worker + rows_per_worker
+        });
+    }
+
+    for col in 0..sqrt-1 {
+        ret.push(GridPatch {
+            start_col : col * cols_per_worker,
+            end_col : col * cols_per_worker + cols_per_worker,
+            start_row : (sqrt-1) * rows_per_worker,
+            end_row : (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt
+        });
+    }
+    ret.push(GridPatch {
+        start_col : (sqrt-1) * cols_per_worker,
+        end_col : (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt,
+        start_row : (sqrt-1) * rows_per_worker,
+        end_row : (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt
+    });
+
+    Some(ret)
 }
 
 impl GridWorker {
@@ -280,12 +341,12 @@ impl GridWorker {
         self.cell_in_range(col, row)
     }
 
-    fn rule_result(self : &Self, idx : usize) -> Option<bool> {
+    fn rule_result(self : &Self, idx : usize, cells : &RwLockReadGuard<BitVec>) -> Option<bool> {
         let (col, row) = self.idx_to_coord(idx);
 
         match self.count_neighbors(col, row) {
             Some(num_neighbors) => {
-                if self.cells.read().unwrap()[idx] == true {
+                if cells[idx] == true {
                     if num_neighbors < 2 || num_neighbors > 3 {
                         Some(false)
                     } else {
@@ -304,15 +365,43 @@ impl GridWorker {
     }
 
     pub fn run_lifecycle(self : &mut Self) {
+        let cells = self.cells.read().unwrap();
+
         for idx in &self.living_cells {
             let indices = self.get_surrounding_cell_idx(*idx);
             for idx in &indices {
                 if self.idx_in_range(*idx) {
-                    if self.rule_result(*idx).unwrap() {
+                    if self.rule_result(*idx, &cells).unwrap() {
                         self.living_cells_tmp.insert(*idx);
                         self.sender.send(*idx);
                     }
                 }
+            }
+        }
+
+        for col in self.col_range.0..self.col_range.1 {
+            let idx = coord_to_idx(self.num_cols, col, self.row_range.0);
+            if self.rule_result(idx, &cells).unwrap() {
+                self.living_cells_tmp.insert(idx);
+                self.sender.send(idx);
+            }
+            let idx = coord_to_idx(self.num_cols, col, self.row_range.1-1);
+            if self.rule_result(idx, &cells).unwrap() {
+                self.living_cells_tmp.insert(idx);
+                self.sender.send(idx);
+            }
+        }
+
+        for row in self.row_range.0..self.row_range.1 {
+            let idx = coord_to_idx(self.num_cols, self.col_range.0, row);
+            if self.rule_result(idx, &cells).unwrap() {
+                self.living_cells_tmp.insert(idx);
+                self.sender.send(idx);
+            }
+            let idx = coord_to_idx(self.num_cols, self.col_range.1-1, row);
+            if self.rule_result(idx, &cells).unwrap() {
+                self.living_cells_tmp.insert(idx);
+                self.sender.send(idx);
             }
         }
 
@@ -366,63 +455,18 @@ impl Grid {
 
 
         let mut workers = Vec::<Arc<Mutex<GridWorker>>>::new();
-        let sqrt = (NUM_THREADS as f64).sqrt() as usize;
-        let cols_per_worker = num_cols / sqrt as usize;
-        let rows_per_worker = num_rows / sqrt as usize;
-        for row in 0..sqrt-1 {
-            for col in 0..sqrt-1 {
-                workers.push(Arc::new(Mutex::new(GridWorker{
-                    living_cells : HashSet::new(),
-                    living_cells_tmp : HashSet::new(),
-                    cells : cells.clone(),
-                    sender : sender.clone(),
-                    col_range : (col * cols_per_worker, col * cols_per_worker + cols_per_worker ),
-                    row_range : (row * rows_per_worker, row * rows_per_worker + rows_per_worker ),
-                    num_cols : num_cols,
-                    num_rows : num_rows
-                })));
-            }
-            workers.push(Arc::new(Mutex::new(GridWorker {
+        let patches = subdivide_grid(num_cols, num_rows, NUM_THREADS).unwrap();
+        for patch in patches {
+            workers.push(Arc::new(Mutex::new(GridWorker{
                 living_cells : HashSet::new(),
                 living_cells_tmp : HashSet::new(),
                 cells : cells.clone(),
                 sender : sender.clone(),
-                col_range : ((sqrt-1) * cols_per_worker, (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt),
-                row_range : (row * rows_per_worker, row * rows_per_worker + rows_per_worker),
+                col_range : (patch.start_col, patch.end_col),
+                row_range : (patch.start_row, patch.end_row),
                 num_cols : num_cols,
                 num_rows : num_rows
             })));
-        }
-
-        for col in 0..sqrt-1 {
-            workers.push(Arc::new(Mutex::new(GridWorker {
-                living_cells : HashSet::new(),
-                living_cells_tmp : HashSet::new(),
-                cells : cells.clone(),
-                sender : sender.clone(),
-                col_range : (col * cols_per_worker, col * cols_per_worker + cols_per_worker ),
-                row_range : ((sqrt-1) * rows_per_worker, (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt),
-                num_cols : num_cols,
-                num_rows : num_rows
-            })));
-        }
-        workers.push(Arc::new(Mutex::new(GridWorker {
-            living_cells : HashSet::new(),
-            living_cells_tmp : HashSet::new(),
-            cells : cells.clone(),
-            sender : sender,
-            col_range : ((sqrt-1) * cols_per_worker, (sqrt-1) * cols_per_worker + cols_per_worker + num_cols % sqrt),
-            row_range : ((sqrt-1) * rows_per_worker, (sqrt-1) * rows_per_worker + rows_per_worker + num_rows % sqrt),
-            num_cols : num_cols,
-            num_rows : num_rows
-        })));
-
-        for worker in &workers {
-            let w = worker.lock().unwrap();
-            println!("{} {}, {} {}", w.col_range.0,
-                                     w.col_range.1,
-                                     w.row_range.0,
-                                     w.row_range.1);
         }
 
         Self{cell_size : cell_size,
@@ -471,7 +515,7 @@ impl Grid {
         let sqrt = (NUM_THREADS as f64).sqrt() as usize;
         let cols_per_worker = self.num_cols / sqrt;
         let rows_per_worker = self.num_rows / sqrt;
-        sqrt * row / rows_per_worker + col / cols_per_worker
+        sqrt * (row / rows_per_worker) + (col / cols_per_worker)
     }
 
     pub fn set_cell(self : &mut Self, col : usize, row : usize, value : bool) {
@@ -482,41 +526,147 @@ impl Grid {
             if value {
                 let worker_idx = self.coord_to_worker(col, row);
                 self.worker[worker_idx].lock().unwrap().set_living_cell(col, row);
+                self.living_cells.insert(idx);
             }
         }
     }
 
     pub fn run_lifecycle(self : &mut Self) {
-        // self.thread_pool.install(||{
-            rayon::scope(|s|{
-                for idx in 0..NUM_THREADS {
-                    let worker = self.worker[idx].clone();
-                    s.spawn(move |_|{ worker.lock().unwrap().run_lifecycle(); });
-                }
-            });
-            println!("FINISHED!");
-
-            let mut cells = self.cells.write().unwrap();
-
-            for idx in &self.living_cells {
-                cells.set(*idx, false);
-            }
-
-            let recv = self.recv.lock().unwrap();
-            let mut i = 0;
-            loop {
-                let r = recv.try_recv();
-                if r.is_err() {
-                    break;
-                }
-                i += 1;
-                let idx = r.unwrap();
-                cells.set(idx, true);
-                self.living_cells_tmp.insert(idx);
-            }
-            std::mem::swap(&mut self.living_cells, &mut self.living_cells_tmp);
-            println!("FINISHED 22!");
-            // println!("Current living cells: {}", i);
+        // rayon::scope(|s|{
+        //     for idx in 0..NUM_THREADS {
+        //         let worker = self.worker[idx].clone();
+        //         s.spawn(move |_|{ worker.lock().unwrap().run_lifecycle(); });
+        //     }
         // });
+
+        let mut arr = vec![];
+        for i in 0..NUM_THREADS {
+            let worker = self.worker[i].clone();
+            arr.push(std::thread::spawn(move ||{ worker.lock().unwrap().run_lifecycle(); }));
+        }
+        for h in arr {
+            let _ = h.join();
+        }
+
+        // println!("FINISHED!");
+
+        let mut cells = self.cells.write().unwrap();
+        for idx in &self.living_cells {
+            cells.set(*idx, false);
+        }
+        self.living_cells.clear();
+
+        let recv = self.recv.lock().unwrap();
+        let mut i = 0;
+        loop {
+            let r = recv.try_recv();
+            if r.is_err() {
+                break;
+            }
+            i += 1;
+            let idx = r.unwrap();
+            cells.set(idx, true);
+            self.living_cells_tmp.insert(idx);
+        }
+        std::mem::swap(&mut self.living_cells, &mut self.living_cells_tmp);
+        // println!("FINISHED 22!");
+    }
+}
+
+
+
+
+
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_subdivied_grid() {
+        // Check invalid arguments
+        let patches = subdivide_grid(100, 100, 2);
+        assert!(patches.is_none());
+        let patches = subdivide_grid(100, 100, 5);
+        assert!(patches.is_none());
+        let patches = subdivide_grid(100, 100, 8);
+        assert!(patches.is_none());
+        let patches = subdivide_grid(4, 3, 16);
+        assert!(patches.is_none());
+        let patches = subdivide_grid(3, 4, 16);
+        assert!(patches.is_none());
+        let patches = subdivide_grid(3, 3, 16);
+        assert!(patches.is_none());
+
+
+        let patches = subdivide_grid(100, 100, 4);
+        assert!(patches.is_some());
+        let patches = patches.unwrap();
+
+        assert_eq!(patches.len(), 4);
+        assert_eq!(patches[0].start_col, 0);
+        assert_eq!(patches[0].end_col, 50);
+        assert_eq!(patches[0].start_row, 0);
+        assert_eq!(patches[0].end_row, 50);
+        assert_eq!(patches[1].start_col, 50);
+        assert_eq!(patches[1].end_col, 100);
+        assert_eq!(patches[1].start_row, 0);
+        assert_eq!(patches[1].end_row, 50);
+        assert_eq!(patches[2].start_col, 0);
+        assert_eq!(patches[2].end_col, 50);
+        assert_eq!(patches[2].start_row, 50);
+        assert_eq!(patches[2].end_row, 100);
+        assert_eq!(patches[3].start_col, 50);
+        assert_eq!(patches[3].end_col, 100);
+        assert_eq!(patches[3].start_row, 50);
+        assert_eq!(patches[3].end_row, 100);
+
+        let patches = subdivide_grid(524, 647, 9);
+        assert!(patches.is_some());
+        let patches = patches.unwrap();
+
+        assert_eq!(patches.len(), 9);
+        assert_eq!(patches[0].start_col, 0);
+        assert_eq!(patches[0].end_col, 174);
+        assert_eq!(patches[0].start_row, 0);
+        assert_eq!(patches[0].end_row, 215);
+        assert_eq!(patches[1].start_col, 174);
+        assert_eq!(patches[1].end_col, 348);
+        assert_eq!(patches[1].start_row, 0);
+        assert_eq!(patches[1].end_row, 215);
+        assert_eq!(patches[2].start_col, 348);
+        assert_eq!(patches[2].end_col, 524);
+        assert_eq!(patches[2].start_row, 0);
+        assert_eq!(patches[2].end_row, 215);
+
+        assert_eq!(patches[3].start_col, 0);
+        assert_eq!(patches[3].end_col, 174);
+        assert_eq!(patches[3].start_row, 215);
+        assert_eq!(patches[3].end_row, 430);
+        assert_eq!(patches[4].start_col, 174);
+        assert_eq!(patches[4].end_col, 348);
+        assert_eq!(patches[4].start_row, 215);
+        assert_eq!(patches[4].end_row, 430);
+        assert_eq!(patches[5].start_col, 348);
+        assert_eq!(patches[5].end_col, 524);
+        assert_eq!(patches[5].start_row, 215);
+        assert_eq!(patches[5].end_row, 430);
+
+        assert_eq!(patches[6].start_col, 0);
+        assert_eq!(patches[6].end_col, 174);
+        assert_eq!(patches[6].start_row, 430);
+        assert_eq!(patches[6].end_row, 647);
+        assert_eq!(patches[7].start_col, 174);
+        assert_eq!(patches[7].end_col, 348);
+        assert_eq!(patches[7].start_row, 430);
+        assert_eq!(patches[7].end_row, 647);
+        assert_eq!(patches[8].start_col, 348);
+        assert_eq!(patches[8].end_col, 524);
+        assert_eq!(patches[8].start_row, 430);
+        assert_eq!(patches[8].end_row, 647);
     }
 }

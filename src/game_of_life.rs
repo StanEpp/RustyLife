@@ -5,7 +5,7 @@ mod grid;
 
 use rodio::Sink;
 use sfml::graphics::{RenderWindow, RenderTarget, View, Transformable,
-                     Color, PrimitiveType, VertexArray};
+                     Color, PrimitiveType, VertexArray, RenderStates};
 use sfml::system::{Vector2f, Vector2i};
 use sfml::window::{Event, Style, Key};
 use std::io::BufReader;
@@ -97,8 +97,8 @@ impl GameOfLife {
 
         let mut w = self.window_size.0 as f32;
 
-        let file = std::fs::File::open("examples/test.mp3").unwrap();
-        sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
+        // let file = std::fs::File::open("examples/test.mp3").unwrap();
+        // sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
 
         let mut view = View::new(Vector2f::new(0.0, 0.0), Vector2f::new(1920.0, 1080.0));
 
@@ -106,17 +106,20 @@ impl GameOfLife {
 
         for i in 0..=100 {
             for j in 0..=100{
-                self.grid.set_cell(10 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(11 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 9 + j *  5, true);
-                self.grid.set_cell(11 + i * 7, 8 + j *  5, true);
+                // let i = 0;
+                // let j = 0;
+                self.grid.set_cell(0 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(1 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 1 + j *  5, true);
+                self.grid.set_cell(1 + i * 7, 0 + j *  5, true);
             }
         }
 
         let mut start = std::time::Instant::now();
         let mut fps = std::time::Instant::now();
         let mut fpsCounter = 0;
+        let mut render = true;
 
         while self.window.is_open() {
             sink.play();
@@ -154,6 +157,26 @@ impl GameOfLife {
                                 view.set_size(Vector2f::new(self.window_size.0 as f32, self.window_size.1 as f32));
                                 w = self.window_size.0 as f32;
                             }
+                            Key::R => {
+                                render = !render;
+                            }
+                            Key::H => {
+                                for row in 0..self.grid.num_rows {
+                                    for col in 0..self.grid.num_cols {
+                                        match self.grid.cell(col, row) {
+                                            true => print!("x ", ),
+                                            false => print!("o ", )
+                                        }
+                                    }
+                                    println!();
+                                }
+                                println!();
+                            }
+                            Key::N => {
+                                self.grid.run_lifecycle();
+                                println!("Lifecycle finished!");
+                                println!("{} {}", self.num_living_cells_curr, self.num_living_cells_prev);
+                            }
                             Key::Escape => {
                                 self.window.close();
                                 sink.stop();
@@ -189,9 +212,11 @@ impl GameOfLife {
 
             self.window.set_active(true);
 
-            // self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
-            // self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
-            self.render_cells();
+            if render {
+                self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
+                self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
+                self.render_cells();
+            }
 
             self.window.display();
 
