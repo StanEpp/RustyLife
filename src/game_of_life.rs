@@ -46,31 +46,49 @@ impl GameOfLife {
     }
 
     fn render_cells(self : &mut Self) {
-        self.num_living_cells_curr = self.grid.living_cells.len();
         let mut i = 0_usize;
-        for idx in &self.grid.living_cells {
-            let (col, row) = self.grid.idx_to_coord(*idx);
-            let p = Vector2f::from(self.grid.cell_to_world(col, row));
-            self.cell_sprites[i*6].position.x = p.x;
-            self.cell_sprites[i*6].position.y = p.y;
+        let mut col = 0;
+        let mut row = 0;
 
-            self.cell_sprites[i*6 + 1].position.x = p.x + 12.0;
-            self.cell_sprites[i*6 + 1].position.y = p.y;
+        for idx in 0..self.grid.cells.len() {
+            let mut u = self.grid.cells[idx];
+            let m = 1_u16 << 15;
 
-            self.cell_sprites[i*6 + 2].position.x = p.x;
-            self.cell_sprites[i*6 + 2].position.y = p.y + 12.0;
+            for _ in 0..=15 {
+                // println!("{} {} {} ", self.grid.cells.len(), col, row);
+                if m & u != 0 {
+                    let p = Vector2f::from(self.grid.cell_to_world(col, row));
+                    self.cell_sprites[i*6].position.x = p.x;
+                    self.cell_sprites[i*6].position.y = p.y;
 
-            self.cell_sprites[i*6 + 3].position.x = p.x + 12.0;
-            self.cell_sprites[i*6 + 3].position.y = p.y;
+                    self.cell_sprites[i*6 + 1].position.x = p.x + 12.0;
+                    self.cell_sprites[i*6 + 1].position.y = p.y;
 
-            self.cell_sprites[i*6 + 4].position.x = p.x + 12.0;
-            self.cell_sprites[i*6 + 4].position.y = p.y + 12.0;
+                    self.cell_sprites[i*6 + 2].position.x = p.x;
+                    self.cell_sprites[i*6 + 2].position.y = p.y + 12.0;
 
-            self.cell_sprites[i*6 + 5].position.x = p.x;
-            self.cell_sprites[i*6 + 5].position.y = p.y + 12.0;
-            i += 1;
+                    self.cell_sprites[i*6 + 3].position.x = p.x + 12.0;
+                    self.cell_sprites[i*6 + 3].position.y = p.y;
+
+                    self.cell_sprites[i*6 + 4].position.x = p.x + 12.0;
+                    self.cell_sprites[i*6 + 4].position.y = p.y + 12.0;
+
+                    self.cell_sprites[i*6 + 5].position.x = p.x;
+                    self.cell_sprites[i*6 + 5].position.y = p.y + 12.0;
+                    i += 1;
+                }
+                u <<= 1;
+                col += 1;
+            }
+
+            if col >= self.grid.num_cols {
+                col = 0;
+                row += 1;
+            }
         }
-
+        // println!();
+        // println!();
+        // println!();
         if i < self.num_living_cells_prev {
             for j in i..self.num_living_cells_prev {
                 self.cell_sprites[j*6].position.x = 0.0;
@@ -98,8 +116,8 @@ impl GameOfLife {
 
         let mut w = self.window_size.0 as f32;
 
-        let file = std::fs::File::open("examples/test.mp3").unwrap();
-        sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
+        // let file = std::fs::File::open("examples/test.mp3").unwrap();
+        // sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
 
         let mut view = View::new(Vector2f::new(0.0, 0.0), Vector2f::new(1920.0, 1080.0));
 
@@ -107,13 +125,17 @@ impl GameOfLife {
 
         for i in 0..=100 {
             for j in 0..=100{
-                self.grid.set_cell(10 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(11 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 9 + j *  5, true);
-                self.grid.set_cell(11 + i * 7, 8 + j *  5, true);
+            // let i = 0;
+            // let j = 0;
+                self.grid.set_cell(0 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(1 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 1 + j *  5, true);
+                self.grid.set_cell(1 + i * 7, 0 + j *  5, true);
             }
         }
+
+        // self.grid.set_cell(1, 1, true);
 
         let mut start = std::time::Instant::now();
         let mut fps = std::time::Instant::now();
@@ -158,6 +180,9 @@ impl GameOfLife {
                             }
                             Key::R => {
                                 render = !render;
+                            }
+                            Key::N => {
+                                self.grid.run_lifecycle();
                             }
                             Key::Escape => {
                                 self.window.close();
