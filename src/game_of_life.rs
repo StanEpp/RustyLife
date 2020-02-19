@@ -98,8 +98,8 @@ impl GameOfLife {
 
         let mut w = self.window_size.0 as f32;
 
-        let file = std::fs::File::open("examples/test.mp3").unwrap();
-        sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
+        // let file = std::fs::File::open("examples/test.mp3").unwrap();
+        // sink.append(rodio::Decoder::new(BufReader::new(file)).unwrap());
 
         let mut view = View::new(Vector2f::new(0.0, 0.0), Vector2f::new(1920.0, 1080.0));
 
@@ -107,11 +107,11 @@ impl GameOfLife {
 
         for i in 0..=100 {
             for j in 0..=100{
-                self.grid.set_cell(10 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(11 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 10 + j * 5, true);
-                self.grid.set_cell(12 + i * 7, 9 + j *  5, true);
-                self.grid.set_cell(11 + i * 7, 8 + j *  5, true);
+                self.grid.set_cell(0 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(1 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 2 + j * 5, true);
+                self.grid.set_cell(2 + i * 7, 1 + j *  5, true);
+                self.grid.set_cell(1 + i * 7, 0 + j *  5, true);
             }
         }
 
@@ -159,6 +159,9 @@ impl GameOfLife {
                             Key::R => {
                                 render = !render;
                             }
+                            Key::N => {
+                                self.grid.run_lifecycle();
+                            }
                             Key::Escape => {
                                 self.window.close();
                                 sink.stop();
@@ -185,7 +188,7 @@ impl GameOfLife {
             }
 
             if start.elapsed().as_millis() >= 10 {
-                self.grid.run_lifecycle();
+                // self.grid.run_lifecycle();
                 start = std::time::Instant::now();
             }
 
