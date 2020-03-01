@@ -1,7 +1,9 @@
 extern crate sfml;
+extern crate rayon;
 
 use sfml::graphics::{Vertex};
 use sfml::system::{Vector2f};
+use rayon::prelude::*;
 
 #[derive(Clone)]
 pub struct Grid {
@@ -10,7 +12,6 @@ pub struct Grid {
     pub horizontal_lines: Vec<Vertex>,
     pub vertical_lines: Vec<Vertex>,
     pub cells : Vec<u16>,
-    pub cells_shadow : Vec<u16>,
     pub num_cols : usize,
     pub num_rows : usize
 }
@@ -52,7 +53,6 @@ impl Grid {
              horizontal_lines : hl,
              vertical_lines : vl,
              cells : cells.clone(),
-             cells_shadow : cells,
              num_cols : board_size.0 as usize,
              num_rows : board_size.1 as usize
         }
@@ -89,6 +89,7 @@ impl Grid {
     pub fn set_cell(self : &mut Self, col : usize, row : usize, value : bool) {
         if col < self.num_cols && row < self.num_rows {
             let idx = self.coord_to_idx(col, row);
+            let col = col % 16;
             let u = self.cells[idx];
             if value {
                 self.cells[idx] = u | (0x1 << (15 - col) as u16);
@@ -104,15 +105,18 @@ impl Grid {
 
         let m1 = 0b010000000000000000000000000000000_u64;
         let m2 = 0b101000000000000000000000000000000_u64;
-        for idx in 0..self.cells.len() {
+
+        (0..self.cells.len())
+        .into_par_iter()
+        .map(|idx| {
             let mut col = (idx + num_cols_c - 1) % num_cols_c;
             let row_off = (idx / num_cols_c) * num_cols_c;
             let row_above_off = (row_off + grid_size_c - num_cols_c) % grid_size_c;
             let row_below_off = (row_off + grid_size_c + num_cols_c) % grid_size_c;
 
-            let mut u_a = self.cells[col + row_above_off] as u64;
+            let mut u_a = self.cells[col + row_above_off] as u64; // above u
             let mut u = self.cells[col + row_off] as u64;
-            let mut u_b = self.cells[col + row_below_off] as u64;
+            let mut u_b = self.cells[col + row_below_off] as u64; // below u
 
             u_a <<= 16;
             u <<= 16;
@@ -138,7 +142,7 @@ impl Grid {
             for _ in 0..=15 {
                 let mut alive_cells = (u_a & m2) + (u & m2) + (u_b & m2);
                 alive_cells >>= 30;
-                alive_cells = (alive_cells & 0b11_u64) + (alive_cells  >> 2) +
+                alive_cells = (alive_cells & 0b11_u64) + (alive_cells >> 2) +
                               ((u_a >> 31) & 0b1_u64) + ((u_b >> 31) & 0b1_u64);
 
                 result <<= 1;
@@ -149,13 +153,13 @@ impl Grid {
                 u_a <<= 1;
                 u   <<= 1;
                 u_b <<= 1;
-                // print!("{} ", alive_cells);
             }
-            // println!();
-            self.cells_shadow[curr_col + row_off] = result as u16;
-        }
-
-        std::mem::swap(&mut self.cells, &mut self.cells_shadow);
-        self.cells_shadow.iter_mut().for_each(|i| *i = 0);
+            (curr_col + row_off, result as u16)
+        })
+        .collect::<Vec<_>>()
+        .iter()
+        .for_each(|(idx, result)|{
+            self.cells[*idx] = *result;
+        });
     }
 }

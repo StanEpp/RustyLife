@@ -9,14 +9,12 @@ use sfml::graphics::{RenderWindow, RenderTarget, View, Transformable,
                      VertexArray, Color, PrimitiveType, RenderStates};
 use sfml::system::{Vector2f, Vector2i};
 use sfml::window::{Event, Style, Key};
-use std::io::BufReader;
 
 pub struct GameOfLife {
     window_size : (u32, u32),
     window : RenderWindow,
     grid : grid::Grid,
     cell_sprites : sfml::graphics::VertexArray,
-    num_living_cells_curr : usize,
     num_living_cells_prev : usize
 }
 
@@ -25,6 +23,9 @@ impl GameOfLife {
     pub fn new (board_size : (u32, u32),
                 name : String,
                 window_size : (u32, u32)) -> GameOfLife {
+
+        let board_size = (board_size.0 - board_size.0 % 16 + 16,
+                          board_size.1 - board_size.1 % 16 + 16);
 
         let mut wnd = RenderWindow::new(window_size,
                                         &name,
@@ -40,7 +41,6 @@ impl GameOfLife {
              window : wnd,
              grid : grid,
              cell_sprites : cell_sprites,
-             num_living_cells_curr : 0,
              num_living_cells_prev : 0,
             }
     }
@@ -137,7 +137,7 @@ impl GameOfLife {
 
         let mut start = std::time::Instant::now();
         let mut fps = std::time::Instant::now();
-        let mut fpsCounter = 0;
+        let mut fps_counter = 0;
         let mut render = true;
 
         while self.window.is_open() {
@@ -220,15 +220,15 @@ impl GameOfLife {
             if render {
                 self.window.draw_primitives(&self.grid.horizontal_lines, PrimitiveType::Quads, RenderStates::default());
                 self.window.draw_primitives(&self.grid.vertical_lines, PrimitiveType::Quads, RenderStates::default());
-                self.render_cells();
+                // self.render_cells();
             }
 
             self.window.display();
 
-            fpsCounter = fpsCounter + 1;
+            fps_counter = fps_counter + 1;
             if fps.elapsed().as_millis() >= 1000 {
-                println!("{}", fpsCounter);
-                fpsCounter = 0;
+                println!("{}", fps_counter);
+                fps_counter = 0;
                 fps = std::time::Instant::now();
             }
 
