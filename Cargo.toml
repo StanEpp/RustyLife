@@ -1,5 +1,5 @@
 [package]
-name = "game_of_life_rust"
+name = "rusty_life"
 version = "0.1.0"
 authors = ["StanEpp"]
 edition = "2018"
@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 rand="0.3.14"
-bit-vec="0.6.1"
-rayon="1.3.0"
+rayon = "1.3.0"
 sdl2 = "0.33.0"
+gl = "0.14.0"
+nalgebra = "0.20"
