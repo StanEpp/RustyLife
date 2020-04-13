@@ -2,7 +2,6 @@ extern crate rayon;
 
 use rayon::prelude::*;
 
-#[derive(Clone)]
 pub struct Grid {
     pub cells : Vec<u16>,
     pub num_cols : usize,
@@ -10,13 +9,13 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new (cell_size : f32, line_width : f32, board_size : (u32, u32)) -> Self {
+    pub fn new (board_size : (u32, u32)) -> Self {
         let size = (board_size.1 * board_size.0) as usize / (std::mem::size_of::<u16>() * 8) ;
         let cells = vec![0_u16 ; size];
-
-        Self{cells : cells.clone(),
-             num_cols : board_size.0 as usize,
-             num_rows : board_size.1 as usize
+        Self {
+            cells : cells.clone(),
+            num_cols : board_size.0 as usize,
+            num_rows : board_size.1 as usize
         }
     }
 
@@ -76,7 +75,6 @@ impl Grid {
             u   |= self.cells[col + row_off] as u64;
             u_b |= self.cells[col + row_below_off] as u64;
 
-            // println!("{:#048b}\n{:#048b}\n{:#048b}", u_a, u, u_b);
             let mut result = 0_64;
             for _ in 0..=15 {
                 let mut alive_cells = (u_a & m2) + (u & m2) + (u_b & m2);
