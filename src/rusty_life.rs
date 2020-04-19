@@ -7,6 +7,7 @@ mod grid;
 mod render;
 mod input;
 mod view;
+mod file_reader;
 
 pub struct RustyLife {
     renderer : render::Renderer,
@@ -40,6 +41,14 @@ impl RustyLife {
         let input = renderer.create_input();
         let view = view::OrthoView::new(window_size);
 
+        // match file_reader::read_rle("./foo.rle") {
+        //     Some(p) => {
+        //         for v in &p.pattern {
+        //             grid.set_cell(v.0 as usize, v.1 as usize, true);
+        //         }
+        //     }
+        //     _ => (),
+        // }
 
         // Randomly initialize grid
         let mut rng = rand::thread_rng();
@@ -75,7 +84,7 @@ impl RustyLife {
         let mut fps = 0;
         let mut sim_step_ms = 10_u128;
         let mut render = true;
-        let mut run_sim = true;
+        let mut run_sim = false;
         let mut run = true;
 
         while run {
