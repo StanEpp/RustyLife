@@ -2,6 +2,7 @@ extern crate sdl2;
 extern crate rand;
 
 use rand::Rng;
+use std::io::{Write, stdout};
 
 mod grid;
 mod render;
@@ -9,11 +10,65 @@ mod input;
 mod view;
 mod file_reader;
 
+macro_rules! enum_str {
+    (enum $name:ident {
+        $($variant:ident),*,
+    }) => {
+        enum $name {
+            $($variant),*
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                match self {
+                    $($name::$variant => write!(f, stringify!($variant))),*
+                }
+            }
+        }
+    };
+}
+
+enum_str!{
+enum SimStatus {
+    PAUSED,
+    RUNNING,
+}
+}
+
+struct Statistics {
+    sim_step_ms : u128,
+    generation : u128,
+    fps : u64,
+    rendering : bool,
+    sim_status : SimStatus,
+    board_width : u128,
+    board_height : u128,
+    resolution_width : u32,
+    resolution_height : u32,
+}
+
+impl Statistics {
+    fn new() -> Statistics {
+        Statistics {
+            sim_step_ms : 10,
+            generation : 0,
+            fps : 0,
+            rendering : true,
+            sim_status : SimStatus::PAUSED,
+            board_width : 0,
+            board_height : 0,
+            resolution_width : 0,
+            resolution_height : 0,
+        }
+    }
+}
+
 pub struct RustyLife {
     renderer : render::Renderer,
     grid : grid::Grid,
     input : input::Input,
     view : view::OrthoView,
+    stats : Statistics,
 }
 
 impl RustyLife {
@@ -32,6 +87,12 @@ impl RustyLife {
             x => board_size.1 + (16 - x)
         };
 
+        let mut stats = Statistics::new();
+        stats.board_width = board_size.0 as u128;
+        stats.board_height = board_size.1 as u128;
+        stats.resolution_width = window_size.0 as u32;
+        stats.resolution_height = window_size.1 as u32;
+
         let mut grid = grid::Grid::new(board_size);
         let renderer = render::Renderer::new(name,
             window_size,
@@ -47,7 +108,7 @@ impl RustyLife {
         //             grid.set_cell(v.0 as usize, v.1 as usize, true);
         //         }
         //     }
-        //     _ => (),
+        //     _ => println!("Couldn't load!"),
         // }
 
         // Randomly initialize grid
@@ -73,18 +134,20 @@ impl RustyLife {
              input : input,
              grid : grid,
              view : view,
+             stats : stats
             }
     }
 
     pub fn run(self : &mut Self) {
+        match crossterm::execute!(stdout(), crossterm::cursor::SavePosition) {
+            Err(_) => (),
+            Ok(_) => (),
+        }
+
         let mut sim_timer = std::time::Instant::now();
-        let mut fps_timer = std::time::Instant::now();
+        let mut frame_counter_timer = std::time::Instant::now();
         let mut frame_timer = std::time::Instant::now();
         let mut fps_counter = 0;
-        let mut fps = 0;
-        let mut sim_step_ms = 10_u128;
-        let mut render = true;
-        let mut run_sim = false;
         let mut run = true;
 
         while run {
@@ -96,42 +159,52 @@ impl RustyLife {
             }
             if input_map.keys_pressed[input::Key::N] {
                 self.grid.run_lifecycle();
+                self.stats.generation += 1;
             }
             if input_map.keys_pressed[input::Key::R] {
-                render = !render;
+                self.stats.rendering = !self.stats.rendering;
             }
             if input_map.keys_pressed[input::Key::SPACE] {
-                run_sim = !run_sim;
+                match self.stats.sim_status {
+                    SimStatus::RUNNING => self.stats.sim_status = SimStatus::PAUSED,
+                    _ => self.stats.sim_status = SimStatus::RUNNING,
+                }
             }
 
             if input_map.keys_hold[input::Key::LSHIFT] &&
                input_map.keys_pressed[input::Key::NumPLUS] {
-                if sim_step_ms < std::u128::MAX-10 {
-                    sim_step_ms += 10;
+                if self.stats.sim_step_ms < std::u128::MAX-10 {
+                    self.stats.sim_step_ms += 10;
                 }
             } else if input_map.keys_pressed[input::Key::NumPLUS] {
-                if sim_step_ms < std::u128::MAX {
-                    sim_step_ms += 1;
+                if self.stats.sim_step_ms < std::u128::MAX {
+                    self.stats.sim_step_ms += 1;
                 }
             }
 
             if input_map.keys_hold[input::Key::LSHIFT] &&
                input_map.keys_pressed[input::Key::NumMINUS] {
-                if sim_step_ms > 10 {
-                    sim_step_ms -= 10;
+                if self.stats.sim_step_ms > 10 {
+                    self.stats.sim_step_ms -= 10;
                 }
             } else if input_map.keys_pressed[input::Key::NumMINUS] {
-                if sim_step_ms > 0 {
-                    sim_step_ms -= 1;
+                if self.stats.sim_step_ms > 0 {
+                    self.stats.sim_step_ms -= 1;
                 }
             }
 
-            if run_sim && sim_timer.elapsed().as_millis() >= sim_step_ms {
-                self.grid.run_lifecycle();
-                sim_timer = std::time::Instant::now();
+            match self.stats.sim_status {
+                SimStatus::RUNNING => {
+                    if sim_timer.elapsed().as_millis() >= self.stats.sim_step_ms {
+                        self.grid.run_lifecycle();
+                        self.stats.generation += 1;
+                        sim_timer = std::time::Instant::now();
+                    }
+                },
+                _ => (),
             }
 
-            if render {
+            if self.stats.rendering {
                 let frame_duration = frame_timer.elapsed();
                 frame_timer = std::time::Instant::now();
                 self.view.update(&input_map, &frame_duration);
@@ -139,13 +212,51 @@ impl RustyLife {
             }
 
             fps_counter = fps_counter + 1;
-            if fps_timer.elapsed().as_millis() >= 1000 {
-                fps = fps_counter;
+            if frame_counter_timer.elapsed().as_millis() >= 1000 {
+                self.stats.fps = fps_counter;
                 fps_counter = 0;
-                fps_timer = std::time::Instant::now();
+                frame_counter_timer = std::time::Instant::now();
             }
 
-            print!("sim_step: {}ms    fps: {}    \r", sim_step_ms, fps);
+            match self.print_statistics() {
+                Err(err) => println!("Error printing Stats: \n\t{}", err),
+                _ => (),
+            }
         }
+    }
+
+    fn print_statistics(self : &Self) -> crossterm::Result<()> {
+        use crossterm::*;
+        let mut stdout = stdout();
+        queue!(stdout, cursor::RestorePosition)?;
+        queue!(stdout, cursor::SavePosition)?;
+        queue!(stdout, style::Print("----------------------------Rusty Life---------------------------------\n"))?;
+        queue!(stdout, style::Print(format!("| sim_step: {}ms                    ", self.stats.sim_step_ms)))?;
+        queue!(stdout, cursor::MoveToColumn(40))?;
+        queue!(stdout, style::Print(format!("board size: {}x{}                   ", self.stats.board_width, self.stats.board_height)))?;
+        queue!(stdout, cursor::MoveToColumn(71))?;
+        queue!(stdout, style::Print("|\n"))?;
+
+        queue!(stdout, style::Print(format!("| generation: {}                    ", self.stats.generation)))?;
+        queue!(stdout, cursor::MoveToColumn(40))?;
+        queue!(stdout, style::Print(format!("resolution: {}x{}                   ", self.stats.resolution_width, self.stats.resolution_height)))?;
+        queue!(stdout, cursor::MoveToColumn(71))?;
+        queue!(stdout, style::Print("|\n"))?;
+
+        queue!(stdout, style::Print(format!("| fps: {}                           ", self.stats.fps)))?;
+        queue!(stdout, cursor::MoveToColumn(71))?;
+        queue!(stdout, style::Print("|\n"))?;
+
+        queue!(stdout, style::Print(format!("| rendering: {}                     ", self.stats.rendering)))?;
+        queue!(stdout, cursor::MoveToColumn(71))?;
+        queue!(stdout, style::Print("|\n"))?;
+
+        queue!(stdout, style::Print(format!("| status: {}                        ", self.stats.sim_status)))?;
+        queue!(stdout, cursor::MoveToColumn(71))?;
+        queue!(stdout, style::Print("|\n"))?;
+
+        queue!(stdout, style::Print("-----------------------------------------------------------------------\n"))?;
+        stdout.flush()?;
+        Ok(())
     }
 }

@@ -45,9 +45,15 @@ pub fn read_rle<P>(filepath : P) -> Option<Pattern>
                 match c {
                     (_, '0'..='9') => (),
                     (idx, '$') => {
-                        row += 1;
-                        col = 0;
+                        let start_idx = (last_idx + 1) as usize;
                         last_idx = idx as i32;
+                        if start_idx == idx {
+                            row += 1;
+                        } else {
+                            let num : usize = l.get(start_idx..idx).unwrap().parse().unwrap();
+                            row += num;
+                        }
+                        col = 0;
                     },
                     (idx, 'o') => {
                         let start_idx = (last_idx + 1) as usize;
