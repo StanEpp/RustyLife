@@ -114,8 +114,8 @@ impl RustyLife {
         // Randomly initialize grid
         let mut rng = rand::thread_rng();
         for _ in 0..(board_size.0 * board_size.1 / 2) {
-            let col = rng.gen_range(0, board_size.0);
-            let row = rng.gen_range(0, board_size.1);
+            let col = rng.gen_range(0..board_size.0);
+            let row = rng.gen_range(0..board_size.1);
             grid.set_cell(col as usize, row as usize, true);
         }
 
@@ -225,7 +225,7 @@ impl RustyLife {
         }
     }
 
-    fn print_statistics(self : &Self) -> crossterm::Result<()> {
+    fn print_statistics(self : &Self) -> std::io::Result<()> {
         use crossterm::*;
         let mut stdout = stdout();
         queue!(stdout, cursor::RestorePosition)?;
